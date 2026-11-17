@@ -49,7 +49,11 @@ int main(int argc, char *argv[]) {
         Ort::Env env;
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(1);
+#if defined(_WIN32) || defined(WIN32)
+        Ort::Session session(env, L"model.onnx", session_options);
+#else
         Ort::Session session(env, "model.onnx", session_options);
+#endif // WIN32
         std::array<int64_t, 4> input_shape = {4, 1, h, w};
         std::array<int64_t, 4> output_shape = {4, 1, h, w};
         std::vector<float> input;
