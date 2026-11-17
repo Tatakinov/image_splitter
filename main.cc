@@ -47,10 +47,9 @@ int main(int argc, char *argv[]) {
     dst.resize(src.size());
     try {
         Ort::Env env;
-        Ort::Session session(nullptr);
         Ort::SessionOptions session_options;
         session_options.SetIntraOpNumThreads(1);
-        session = {env, "model.onnx", session_options};
+        Ort::Session session(env, "model.onnx", session_options);
         std::array<int64_t, 4> input_shape = {4, 1, h, w};
         std::array<int64_t, 4> output_shape = {4, 1, h, w};
         std::vector<float> input;
