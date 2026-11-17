@@ -35,6 +35,16 @@ $ cmake -S . -B build
 $ cmake --build build
 ```
 
+## How to use
+
+```
+$ image_splitter /path/to/image.png
+```
+
+もしくは実行ファイルに画像をD&D。
+
+出力は`output_*.png`になっています。
+
 # Learning
 
 1. `learn`ディレクトリ以下に`test`と`train`ディレクトリを作る
