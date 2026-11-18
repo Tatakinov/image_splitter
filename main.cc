@@ -10,8 +10,17 @@
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #include <stb_image_write.h>
 
+namespace {
+    const int kMaxThreshold = 0xff * 6 + 1;
+}
+
 struct pos_t {
     int x, y;
+};
+
+struct region_t {
+    std::vector<bool> r;
+    std::queue<pos_t> q;
 };
 
 template<class T>
@@ -23,15 +32,27 @@ int main(int argc, char *argv[]) {
     if (argc < 2) {
         return 1;
     }
-    int rate = 1;
+    double rate = 0.1;
     if (argc >= 3) {
         std::istringstream iss(argv[2]);
         iss >> rate;
+        if (rate > 100) {
+            rate = 100;
+        }
+        if (rate < 0) {
+            rate = 0;
+        }
     }
     int threshold = 0;
     if (argc >= 4) {
         std::istringstream iss(argv[3]);
         iss >> threshold;
+        if (threshold > 0xff) {
+            threshold = 0xff;
+        }
+        if (threshold < 0) {
+            threshold = 0;
+        }
     }
     int w, h, _;
     unsigned char *img = stbi_load(argv[1], &w, &h, &_, 4);
@@ -158,6 +179,7 @@ int main(int argc, char *argv[]) {
             dst[index * 4 + 3] <= threshold &&
             !all[index];
     };
+#if 0
     std::vector<unsigned char> debug;
     debug.resize(blur.size());
     for (int i = 0; i < w * h; i++) {
@@ -175,14 +197,31 @@ int main(int argc, char *argv[]) {
         }
     }
     stbi_write_png("output.png", w, h, 4, debug.data(), w * 4);
-    std::cout << "onnx " << w << "," << h << std::endl;
-    std::vector<std::vector<bool>> parts;
+#endif
+    //std::cout << "onnx " << w << "," << h << std::endl;
+    std::vector<region_t> parts;
+    auto spreadable = [&](int x, int y) {
+        int i = y * w + x;
+        if (x > 0 && !all[i - 1]) {
+            return true;
+        }
+        if (x + 1 < w && !all[i + 1]) {
+            return true;
+        }
+        if (y > 0 && !all[i - w]) {
+            return true;
+        }
+        if (y + 1 < h && !all[i + w]) {
+            return true;
+        }
+        return false;
+    };
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             int index = (y * w + x);
             if (cond(index)) {
-                std::vector<bool> part;
-                part.resize(all.size());
+                region_t part;
+                part.r.resize(all.size());
                 std::queue<pos_t> q;
                 q.push({x, y});
                 while (!q.empty()) {
@@ -192,7 +231,7 @@ int main(int argc, char *argv[]) {
                         continue;
                     }
                     all[y * w + x] = true;
-                    part[y * w + x] = true;
+                    part.r[y * w + x] = true;
                     if (x > 0 && cond(y * w + (x - 1))) {
                         q.push({x - 1, y});
                     }
@@ -211,14 +250,14 @@ int main(int argc, char *argv[]) {
         }
     }
     std::cout << "parts" << parts.size() << std::endl;
-    std::sort(parts.begin(), parts.end(), [&](const std::vector<bool> &a, const std::vector<bool> &b) {
+    std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
         int cnt_a = 0;
         int cnt_b = 0;
         for (int i = 0; i < w * h; i++) {
-            if (a[i]) {
+            if (a.r[i]) {
                 cnt_a++;
             }
-            if (b[i]) {
+            if (b.r[i]) {
                 cnt_b++;
             }
         }
@@ -228,13 +267,13 @@ int main(int argc, char *argv[]) {
         auto &last = parts.back();
         int cnt = 0;
         for (int i = 0; i < w * h; i++) {
-            if (last[i]) {
+            if (last.r[i]) {
                 cnt++;
             }
         }
-        if (cnt * 1000 < all.size() * rate) {
+        if (cnt < all.size() * rate / 100.0) {
             for (int i = 0; i < w * h; i++) {
-                if (last[i]) {
+                if (last.r[i]) {
                     all[i] = false;
                 }
             }
@@ -242,6 +281,19 @@ int main(int argc, char *argv[]) {
         }
         else {
             break;
+        }
+    }
+    for (auto &p : parts) {
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x;
+                if (!p.r[i]) {
+                    continue;
+                }
+                if (spreadable(x, y)) {
+                    p.q.push({x, y});
+                }
+            }
         }
     }
     std::cout << "parts" << parts.size() << std::endl;
@@ -268,99 +320,125 @@ int main(int argc, char *argv[]) {
 #endif
     auto cond2 = [&](int index, int base) {
         if (all[index]) {
-            return 0xff * 3 + 1;
+            return kMaxThreshold + 1;
         }
         int sum = 0;
         sum += diff(src[4 * index + 0], src[4 * base + 0]);
         sum += diff(src[4 * index + 1], src[4 * base + 1]);
         sum += diff(src[4 * index + 2], src[4 * base + 2]);
-        sum += diff(src[4 * index + 3], src[4 * base + 3]);
+        sum += diff(src[4 * index + 3], src[4 * base + 3]) * 3 + 1; // alphaは他のより重く見る
         return sum;
     };
     int progress = 0;
     int prev_count = 0, count = 0;
-    for (int thres = 0; thres < 0xff * 3; thres++) {
-        while (true) {
-            int minimum = 0xff * 3 + 1;
-            prev_count = count;
-            for (auto &p : parts) {
-                std::vector<bool> next = p;
-                for (int y = 0; y < h; y++) {
-                    for (int x = 0; x < w; x++) {
-                        int i = y * w + x;
-                        if (!p[i]) {
-                            continue;
-                        }
-                        if (x > 0) {
-                            int sum = cond2(i - 1, i);
-                            if (sum > thres) {
-                                minimum = std::min(minimum, sum);
-                            }
-                            else {
-                                all[i - 1] = true;
-                                next[i - 1] = true;
-                            }
-                        }
-                        if (x + 1 < w) {
-                            int sum = cond2(i + 1, i);
-                            if (sum > thres) {
-                                minimum = std::min(minimum, sum);
-                            }
-                            else {
-                                all[i + 1] = true;
-                                next[i + 1] = true;
-                            }
-                        }
-                        if (y > 0) {
-                            int sum = cond2(i - w, i);
-                            if (sum > thres) {
-                                minimum = std::min(minimum, sum);
-                            }
-                            else {
-                                all[i - w] = true;
-                                next[i - w] = true;
-                            }
-                        }
-                        if (y + 1 < h) {
-                            int sum = cond2(i + w, i);
-                            if (sum > thres) {
-                                minimum = std::min(minimum, sum);
-                            }
-                            else {
-                                all[i + w] = true;
-                                next[i + w] = true;
-                            }
+    int thres = 0;
+    while (thres <= kMaxThreshold) {
+        int minimum = kMaxThreshold + 1;
+        prev_count = count;
+        for (auto &p : parts) {
+            std::queue<pos_t> q;
+            while (!p.q.empty()) {
+                auto [x, y] = p.q.front();
+                p.q.pop();
+                int i = y * w + x;
+                if (x > 0) {
+                    int sum = cond2(i - 1, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i - 1] = true;
+                        p.r[i - 1] = true;
+                        if (spreadable(x - 1, y)) {
+                            q.push({x - 1, y});
                         }
                     }
                 }
-                p = next;
-            }
-            count = 0;
-            for (int i = 0; i < w * h; i++) {
-                if (!all[i]) {
-                    count++;
+                if (x + 1 < w) {
+                    int sum = cond2(i + 1, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i + 1] = true;
+                        p.r[i + 1] = true;
+                        if (spreadable(x + 1, y)) {
+                            q.push({x + 1, y});
+                        }
+                    }
+                }
+                if (y > 0) {
+                    int sum = cond2(i - w, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i - w] = true;
+                        p.r[i - w] = true;
+                        if (spreadable(x, y - 1)) {
+                            q.push({x, y - 1});
+                        }
+                    }
+                }
+                if (y + 1 < h) {
+                    int sum = cond2(i + w, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i + w] = true;
+                        p.r[i + w] = true;
+                        if (spreadable(x, y + 1)) {
+                            q.push({x, y + 1});
+                        }
+                    }
+                }
+                if (spreadable(x, y)) {
+                    q.push({x, y});
                 }
             }
-            if (progress < (all.size() - count) * 100 / all.size()) {
-                progress = (all.size() - count) * 100 / all.size();
-                std::cout << progress << "%" << std::endl;
+            p.q = q;
+        }
+        count = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (!all[i]) {
+                count++;
             }
-            if (prev_count == count || count == 0) {
-                break;
-            }
-            thres = minimum;
+        }
+        if (progress < (all.size() - count) * 100 / all.size()) {
+            progress = (all.size() - count) * 100 / all.size();
+            std::cout << progress << "%" << std::endl;
         }
         if (count == 0) {
             break;
         }
+        if (prev_count == count) {
+            thres = minimum;
+        }
+        else {
+            thres = 0;
+        }
     }
     std::cout << "spread" << std::endl;
+    std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
+        int cnt_a = 0;
+        int cnt_b = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (a.r[i]) {
+                cnt_a++;
+            }
+            if (b.r[i]) {
+                cnt_b++;
+            }
+        }
+        return cnt_a > cnt_b;
+    });
     for (int i = 0; i < parts.size(); i++) {
         std::vector<unsigned char> out;
         out.resize(src.size());
         const auto &p = parts[i];
         for (int j = 0; j < w * h; j++) {
-            if (!p[j]) {
+            if (!p.r[j]) {
                 continue;
             }
             out[j * 4 + 0] = src[j * 4 + 0];
