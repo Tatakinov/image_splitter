@@ -28,7 +28,7 @@ struct spread_t {
 
 struct region_t {
     std::vector<bool> r;
-    std::queue<pos_t> q;
+    int size;
 };
 
 template<class T>
@@ -214,6 +214,7 @@ int main(int argc, char *argv[]) {
             if (cond(index)) {
                 region_t part;
                 part.r.resize(all.size());
+                part.size = 0;
                 std::queue<pos_t> q;
                 q.push({x, y});
                 while (!q.empty()) {
@@ -222,18 +223,19 @@ int main(int argc, char *argv[]) {
                     if (!cond(y * w + x)) {
                         continue;
                     }
+                    part.size++;
                     all[y * w + x] = true;
                     part.r[y * w + x] = true;
-                    if (x > 0 && cond(y * w + (x - 1))) {
+                    if (x > 0) {
                         q.push({x - 1, y});
                     }
-                    if (x + 1 < w && cond(y * w + (x + 1))) {
+                    if (x + 1 < w) {
                         q.push({x + 1, y});
                     }
-                    if (y > 0 && cond((y - 1) * w + x)) {
+                    if (y > 0) {
                         q.push({x, y - 1});
                     }
-                    if (y + 1 < h && cond((y + 1) * w + x)) {
+                    if (y + 1 < h) {
                         q.push({x, y + 1});
                     }
                 }
@@ -241,19 +243,6 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
-        int cnt_a = 0;
-        int cnt_b = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (a.r[i]) {
-                cnt_a++;
-            }
-            if (b.r[i]) {
-                cnt_b++;
-            }
-        }
-        return cnt_a > cnt_b;
-    });
     std::cout << "parts" << parts.size() << std::endl;
 #if 0
     for (int i = 0; i < parts.size(); i++) {
@@ -337,6 +326,7 @@ int main(int argc, char *argv[]) {
                     d++;
                     all[i] = true;
                     parts[index].r[i] = true;
+                    parts[index].size++;
                     if (x > 0 && !all[i - 1]) {
                         auto c = cond2(i - 1, i);
                         if (c == k) {
@@ -392,42 +382,16 @@ int main(int argc, char *argv[]) {
         }
     };
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
-        int cnt_a = 0;
-        int cnt_b = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (a.r[i]) {
-                cnt_a++;
-            }
-            if (b.r[i]) {
-                cnt_b++;
-            }
-        }
-        return cnt_a > cnt_b;
+        return a.size > b.size;
     });
     spread();
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
-        int cnt_a = 0;
-        int cnt_b = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (a.r[i]) {
-                cnt_a++;
-            }
-            if (b.r[i]) {
-                cnt_b++;
-            }
-        }
-        return cnt_a > cnt_b;
+        return a.size > b.size;
     });
     int sum = parts.size();
     while (true) {
         auto &last = parts.back();
-        int cnt = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (last.r[i]) {
-                cnt++;
-            }
-        }
-        if (cnt < all.size() * rate / 100.0) {
+        if (last.size < all.size() * rate / 100.0) {
             for (int i = 0; i < w * h; i++) {
                 if (last.r[i]) {
                     all[i] = false;
@@ -442,17 +406,7 @@ int main(int argc, char *argv[]) {
     std::cout << "parts reduction: " << sum << " -> " << parts.size() << std::endl;
     spread();
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
-        int cnt_a = 0;
-        int cnt_b = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (a.r[i]) {
-                cnt_a++;
-            }
-            if (b.r[i]) {
-                cnt_b++;
-            }
-        }
-        return cnt_a > cnt_b;
+        return a.size > b.size;
     });
     for (int i = 0; i < parts.size(); i++) {
         std::vector<unsigned char> out;
