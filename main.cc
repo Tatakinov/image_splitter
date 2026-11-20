@@ -1,4 +1,6 @@
 #include <iostream>
+#include <map>
+#include <optional>
 #include <queue>
 #include <sstream>
 #include <string>
@@ -16,6 +18,12 @@ namespace {
 
 struct pos_t {
     int x, y;
+};
+
+struct spread_t {
+    int x;
+    int y;
+    int index_region;
 };
 
 struct region_t {
@@ -200,22 +208,6 @@ int main(int argc, char *argv[]) {
 #endif
     //std::cout << "onnx " << w << "," << h << std::endl;
     std::vector<region_t> parts;
-    auto spreadable = [&](int x, int y) {
-        int i = y * w + x;
-        if (x > 0 && !all[i - 1]) {
-            return true;
-        }
-        if (x + 1 < w && !all[i + 1]) {
-            return true;
-        }
-        if (y > 0 && !all[i - w]) {
-            return true;
-        }
-        if (y + 1 < h && !all[i + w]) {
-            return true;
-        }
-        return false;
-    };
     for (int y = 0; y < h; y++) {
         for (int x = 0; x < w; x++) {
             int index = (y * w + x);
@@ -262,19 +254,6 @@ int main(int argc, char *argv[]) {
         }
         return cnt_a > cnt_b;
     });
-    for (auto &p : parts) {
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int i = y * w + x;
-                if (!p.r[i]) {
-                    continue;
-                }
-                if (spreadable(x, y)) {
-                    p.q.push({x, y});
-                }
-            }
-        }
-    }
     std::cout << "parts" << parts.size() << std::endl;
 #if 0
     for (int i = 0; i < parts.size(); i++) {
@@ -312,97 +291,120 @@ int main(int argc, char *argv[]) {
         sum += blur[4 * index + 3] * 3;
         return sum;
     };
-    int progress = 0;
-    int prev_count = 0, count = 0;
-    int thres = 0;
-    while (thres <= kMaxThreshold) {
-        int minimum = kMaxThreshold + 1;
-        prev_count = count;
-        for (auto &p : parts) {
-            std::queue<pos_t> q;
-            while (!p.q.empty()) {
-                auto [x, y] = p.q.front();
-                p.q.pop();
-                int i = y * w + x;
-                if (x > 0) {
-                    int sum = cond2(i - 1, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
+    auto spread = [&]() {
+        std::map<int, std::queue<spread_t>> spread_map;
+        for (int j = 0; j < parts.size(); j++) {
+            for (int y = 0; y < h; y++) {
+                for (int x = 0; x < w; x++) {
+                    int i = y * w + x;
+                    if (!parts[j].r[i]) {
+                        continue;
                     }
-                    else {
-                        all[i - 1] = true;
-                        p.r[i - 1] = true;
-                        if (spreadable(x - 1, y)) {
-                            q.push({x - 1, y});
-                        }
+                    if (x > 0 && !all[i - 1]) {
+                        spread_map[cond2(i - 1, i)].push({x - 1, y, j});
                     }
-                }
-                if (x + 1 < w) {
-                    int sum = cond2(i + 1, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
+                    if (x + 1 < w && !all[i + 1]) {
+                        spread_map[cond2(i + 1, i)].push({x + 1, y, j});
                     }
-                    else {
-                        all[i + 1] = true;
-                        p.r[i + 1] = true;
-                        if (spreadable(x + 1, y)) {
-                            q.push({x + 1, y});
-                        }
+                    if (y > 0 && !all[i - w]) {
+                        spread_map[cond2(i - w, i)].push({x, y - 1, j});
                     }
-                }
-                if (y > 0) {
-                    int sum = cond2(i - w, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
+                    if (y + 1 < h && !all[i + w]) {
+                        spread_map[cond2(i + w, i)].push({x, y + 1, j});
                     }
-                    else {
-                        all[i - w] = true;
-                        p.r[i - w] = true;
-                        if (spreadable(x, y - 1)) {
-                            q.push({x, y - 1});
-                        }
-                    }
-                }
-                if (y + 1 < h) {
-                    int sum = cond2(i + w, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
-                    }
-                    else {
-                        all[i + w] = true;
-                        p.r[i + w] = true;
-                        if (spreadable(x, y + 1)) {
-                            q.push({x, y + 1});
-                        }
-                    }
-                }
-                if (spreadable(x, y)) {
-                    q.push({x, y});
                 }
             }
-            p.q = q;
         }
-        count = 0;
+        int progress = 0;
+        int done = 0;
         for (int i = 0; i < w * h; i++) {
-            if (!all[i]) {
-                count++;
+            if (all[i]) {
+                done++;
             }
         }
-        if (progress < (all.size() - count) * 100 / all.size()) {
-            progress = (all.size() - count) * 100 / all.size();
-            std::cout << progress << "%" << std::endl;
+        while (done < all.size()) {
+            int d = 0;
+            std::optional<int> defer_delete;
+            for (auto &[k, v] : spread_map) {
+                std::queue<spread_t> q;
+                while (!v.empty()) {
+                    auto [x, y, index] = v.front();
+                    v.pop();
+                    int i = y * w + x;
+                    if (all[i]) {
+                        continue;
+                    }
+                    d++;
+                    all[i] = true;
+                    parts[index].r[i] = true;
+                    if (x > 0 && !all[i - 1]) {
+                        auto c = cond2(i - 1, i);
+                        if (c == k) {
+                            q.push({x - 1, y, index});
+                        }
+                        else {
+                            spread_map[c].push({x - 1, y, index});
+                        }
+                    }
+                    if (x + 1 < w && !all[i + 1]) {
+                        auto c = cond2(i + 1, i);
+                        if (c == k) {
+                            q.push({x + 1, y, index});
+                        }
+                        else {
+                            spread_map[c].push({x + 1, y, index});
+                        }
+                    }
+                    if (y > 0 && !all[i - w]) {
+                        auto c = cond2(i - w, i);
+                        if (c == k) {
+                            q.push({x, y - 1, index});
+                        }
+                        else {
+                            spread_map[c].push({x, y - 1, index});
+                        }
+                    }
+                    if (y + 1 < h && !all[i + w]) {
+                        auto c = cond2(i + w, i);
+                        if (c == k) {
+                            q.push({x, y + 1, index});
+                        }
+                        else {
+                            spread_map[c].push({x, y + 1, index});
+                        }
+                    }
+                }
+                v = q;
+                if (v.empty()) {
+                    defer_delete = k;
+                }
+                break;
+            }
+            if (defer_delete) {
+                spread_map.erase(defer_delete.value());
+                defer_delete = std::nullopt;
+            }
+            if (progress < (done + d) * 100 / all.size()) {
+                progress = (done + d) * 100 / all.size();
+                std::cout << progress << "%" << std::endl;
+            }
+            done += d;
         }
-        if (count == 0) {
-            break;
+    };
+    std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
+        int cnt_a = 0;
+        int cnt_b = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (a.r[i]) {
+                cnt_a++;
+            }
+            if (b.r[i]) {
+                cnt_b++;
+            }
         }
-        if (prev_count == count) {
-            thres = minimum;
-        }
-        else {
-            thres = 0;
-        }
-    }
-    std::cout << "spread1" << std::endl;
+        return cnt_a > cnt_b;
+    });
+    spread();
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
         int cnt_a = 0;
         int cnt_b = 0;
@@ -437,115 +439,8 @@ int main(int argc, char *argv[]) {
             break;
         }
     }
-    for (auto &p : parts) {
-        while (!p.q.empty()) {
-            p.q.pop();
-        }
-        for (int y = 0; y < h; y++) {
-            for (int x = 0; x < w; x++) {
-                int i = y * w + x;
-                if (!p.r[i]) {
-                    continue;
-                }
-                if (spreadable(x, y)) {
-                    p.q.push({x, y});
-                }
-            }
-        }
-    }
     std::cout << "parts reduction: " << sum << " -> " << parts.size() << std::endl;
-    progress = 0;
-    prev_count = 0;
-    count = 0;
-    thres = 0;
-    while (thres <= kMaxThreshold) {
-        int minimum = kMaxThreshold + 1;
-        prev_count = count;
-        for (auto &p : parts) {
-            std::queue<pos_t> q;
-            while (!p.q.empty()) {
-                auto [x, y] = p.q.front();
-                p.q.pop();
-                int i = y * w + x;
-                if (x > 0) {
-                    int sum = cond2(i - 1, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
-                    }
-                    else {
-                        all[i - 1] = true;
-                        p.r[i - 1] = true;
-                        if (spreadable(x - 1, y)) {
-                            q.push({x - 1, y});
-                        }
-                    }
-                }
-                if (x + 1 < w) {
-                    int sum = cond2(i + 1, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
-                    }
-                    else {
-                        all[i + 1] = true;
-                        p.r[i + 1] = true;
-                        if (spreadable(x + 1, y)) {
-                            q.push({x + 1, y});
-                        }
-                    }
-                }
-                if (y > 0) {
-                    int sum = cond2(i - w, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
-                    }
-                    else {
-                        all[i - w] = true;
-                        p.r[i - w] = true;
-                        if (spreadable(x, y - 1)) {
-                            q.push({x, y - 1});
-                        }
-                    }
-                }
-                if (y + 1 < h) {
-                    int sum = cond2(i + w, i);
-                    if (sum > thres) {
-                        minimum = std::min(minimum, sum);
-                    }
-                    else {
-                        all[i + w] = true;
-                        p.r[i + w] = true;
-                        if (spreadable(x, y + 1)) {
-                            q.push({x, y + 1});
-                        }
-                    }
-                }
-                if (spreadable(x, y)) {
-                    q.push({x, y});
-                }
-            }
-            p.q = q;
-        }
-        count = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (!all[i]) {
-                count++;
-            }
-        }
-        if (progress < (all.size() - count) * 100 / all.size()) {
-            progress = (all.size() - count) * 100 / all.size();
-            std::cout << progress << "%" << std::endl;
-        }
-        if (count == 0) {
-            break;
-        }
-        if (prev_count == count) {
-            thres = minimum;
-        }
-        else {
-            thres = 0;
-        }
-    }
-    std::cout << "spread2" << std::endl;
+    spread();
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
         int cnt_a = 0;
         int cnt_b = 0;
