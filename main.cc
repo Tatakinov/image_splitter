@@ -11,7 +11,7 @@
 #include <stb_image_write.h>
 
 namespace {
-    const int kMaxThreshold = 0xff * 6 + 1;
+    const int kMaxThreshold = 0xff * 12 + 1;
 }
 
 struct pos_t {
@@ -32,7 +32,7 @@ int main(int argc, char *argv[]) {
     if (argc < 2) {
         return 1;
     }
-    double rate = 0.1;
+    double rate = 1.0;
     if (argc >= 3) {
         std::istringstream iss(argv[2]);
         iss >> rate;
@@ -249,7 +249,6 @@ int main(int argc, char *argv[]) {
             }
         }
     }
-    std::cout << "parts" << parts.size() << std::endl;
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
         int cnt_a = 0;
         int cnt_b = 0;
@@ -263,26 +262,6 @@ int main(int argc, char *argv[]) {
         }
         return cnt_a > cnt_b;
     });
-    while (true) {
-        auto &last = parts.back();
-        int cnt = 0;
-        for (int i = 0; i < w * h; i++) {
-            if (last.r[i]) {
-                cnt++;
-            }
-        }
-        if (cnt < all.size() * rate / 100.0) {
-            for (int i = 0; i < w * h; i++) {
-                if (last.r[i]) {
-                    all[i] = false;
-                }
-            }
-            parts.pop_back();
-        }
-        else {
-            break;
-        }
-    }
     for (auto &p : parts) {
         for (int y = 0; y < h; y++) {
             for (int x = 0; x < w; x++) {
@@ -327,6 +306,10 @@ int main(int argc, char *argv[]) {
         sum += diff(src[4 * index + 1], src[4 * base + 1]);
         sum += diff(src[4 * index + 2], src[4 * base + 2]);
         sum += diff(src[4 * index + 3], src[4 * base + 3]) * 3 + 1; // alphaは他のより重く見る
+        sum += blur[4 * index + 0];
+        sum += blur[4 * index + 1];
+        sum += blur[4 * index + 2];
+        sum += blur[4 * index + 3] * 3;
         return sum;
     };
     int progress = 0;
@@ -419,7 +402,150 @@ int main(int argc, char *argv[]) {
             thres = 0;
         }
     }
-    std::cout << "spread" << std::endl;
+    std::cout << "spread1" << std::endl;
+    std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
+        int cnt_a = 0;
+        int cnt_b = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (a.r[i]) {
+                cnt_a++;
+            }
+            if (b.r[i]) {
+                cnt_b++;
+            }
+        }
+        return cnt_a > cnt_b;
+    });
+    int sum = parts.size();
+    while (true) {
+        auto &last = parts.back();
+        int cnt = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (last.r[i]) {
+                cnt++;
+            }
+        }
+        if (cnt < all.size() * rate / 100.0) {
+            for (int i = 0; i < w * h; i++) {
+                if (last.r[i]) {
+                    all[i] = false;
+                }
+            }
+            parts.pop_back();
+        }
+        else {
+            break;
+        }
+    }
+    for (auto &p : parts) {
+        while (!p.q.empty()) {
+            p.q.pop();
+        }
+        for (int y = 0; y < h; y++) {
+            for (int x = 0; x < w; x++) {
+                int i = y * w + x;
+                if (!p.r[i]) {
+                    continue;
+                }
+                if (spreadable(x, y)) {
+                    p.q.push({x, y});
+                }
+            }
+        }
+    }
+    std::cout << "parts reduction: " << sum << " -> " << parts.size() << std::endl;
+    progress = 0;
+    prev_count = 0;
+    count = 0;
+    thres = 0;
+    while (thres <= kMaxThreshold) {
+        int minimum = kMaxThreshold + 1;
+        prev_count = count;
+        for (auto &p : parts) {
+            std::queue<pos_t> q;
+            while (!p.q.empty()) {
+                auto [x, y] = p.q.front();
+                p.q.pop();
+                int i = y * w + x;
+                if (x > 0) {
+                    int sum = cond2(i - 1, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i - 1] = true;
+                        p.r[i - 1] = true;
+                        if (spreadable(x - 1, y)) {
+                            q.push({x - 1, y});
+                        }
+                    }
+                }
+                if (x + 1 < w) {
+                    int sum = cond2(i + 1, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i + 1] = true;
+                        p.r[i + 1] = true;
+                        if (spreadable(x + 1, y)) {
+                            q.push({x + 1, y});
+                        }
+                    }
+                }
+                if (y > 0) {
+                    int sum = cond2(i - w, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i - w] = true;
+                        p.r[i - w] = true;
+                        if (spreadable(x, y - 1)) {
+                            q.push({x, y - 1});
+                        }
+                    }
+                }
+                if (y + 1 < h) {
+                    int sum = cond2(i + w, i);
+                    if (sum > thres) {
+                        minimum = std::min(minimum, sum);
+                    }
+                    else {
+                        all[i + w] = true;
+                        p.r[i + w] = true;
+                        if (spreadable(x, y + 1)) {
+                            q.push({x, y + 1});
+                        }
+                    }
+                }
+                if (spreadable(x, y)) {
+                    q.push({x, y});
+                }
+            }
+            p.q = q;
+        }
+        count = 0;
+        for (int i = 0; i < w * h; i++) {
+            if (!all[i]) {
+                count++;
+            }
+        }
+        if (progress < (all.size() - count) * 100 / all.size()) {
+            progress = (all.size() - count) * 100 / all.size();
+            std::cout << progress << "%" << std::endl;
+        }
+        if (count == 0) {
+            break;
+        }
+        if (prev_count == count) {
+            thres = minimum;
+        }
+        else {
+            thres = 0;
+        }
+    }
+    std::cout << "spread2" << std::endl;
     std::sort(parts.begin(), parts.end(), [&](const region_t &a, const region_t &b) {
         int cnt_a = 0;
         int cnt_b = 0;
